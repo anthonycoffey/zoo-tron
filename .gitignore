@@ -1,0 +1,10 @@
+build/
+cmake-build-*/
+.cache/
+.DS_Store
+*.user
+*.xcodeproj/
+*.waveform
+
+# Generated audition renders (reproducible via tools/render.cpp)
+auditions/
