@@ -13,6 +13,7 @@ generic auto-wah:
   with simultaneous Low Pass / Band Pass / High Pass taps.
 - **Op-amp character** — gentle `tanh` saturation, 2× oversampled.
 
+
 ## Controls
 
 | Control | What it does |
@@ -43,3 +44,7 @@ the AU and VST3 are also installed to your user plugin folders.
 ```sh
 auval -v aufx Zt3a Coff      # Audio Unit validation
 ```
+
+## Screenshot
+
+<img width="342" height="599" alt="image" src="https://github.com/user-attachments/assets/2f8014fa-fc7b-4fe4-ab4c-a09d65512032" />
