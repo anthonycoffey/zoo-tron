@@ -265,10 +265,14 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
     setLookAndFeel (&lnf);
 
     styleKnob (gain); styleKnob (peak); styleKnob (output); styleKnob (mix);
-    gainAtt   = std::make_unique<SA> (p.apvts, "gain",   gain);
-    peakAtt   = std::make_unique<SA> (p.apvts, "peak",   peak);
-    outputAtt = std::make_unique<SA> (p.apvts, "output", output);
-    mixAtt    = std::make_unique<SA> (p.apvts, "mix",    mix);
+    styleKnob (attack); styleKnob (release); styleKnob (drive);
+    gainAtt    = std::make_unique<SA> (p.apvts, "gain",    gain);
+    peakAtt    = std::make_unique<SA> (p.apvts, "peak",    peak);
+    attackAtt  = std::make_unique<SA> (p.apvts, "attack",  attack);
+    releaseAtt = std::make_unique<SA> (p.apvts, "release", release);
+    driveAtt   = std::make_unique<SA> (p.apvts, "drive",   drive);
+    outputAtt  = std::make_unique<SA> (p.apvts, "output",  output);
+    mixAtt     = std::make_unique<SA> (p.apvts, "mix",     mix);
 
     rangeSw = std::make_unique<PedalSwitch> (*p.apvts.getParameter ("range"),
                   juce::StringArray { "HI", "LO" }, std::vector<int> { 1, 0 }, "RANGE");
@@ -284,7 +288,7 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
     addAndMakeVisible (footswitch);
     addAndMakeVisible (led);
 
-    setSize (340, 600);
+    setSize (360, 700);
     startTimerHz (30);
 }
 
@@ -335,37 +339,44 @@ void ZooTronAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (colours::cream);
     g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    g.drawText ("ZOO-TRON III", juce::Rectangle<int> (0, 38, 330, 28), juce::Justification::centred);
+    g.drawText ("ZOO-TRON III", juce::Rectangle<int> (0, 34, 360, 28), juce::Justification::centred);
     g.setColour (colours::textMute);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("envelope filter", juce::Rectangle<int> (0, 64, 330, 14), juce::Justification::centred);
-    g.drawText ("ENV", juce::Rectangle<int> (286, 56, 32, 12), juce::Justification::centred);
+    g.drawText ("envelope filter", juce::Rectangle<int> (0, 62, 360, 14), juce::Justification::centred);
+    g.drawText ("ENV", juce::Rectangle<int> (300, 60, 44, 12), juce::Justification::centred);
 
     g.setColour (colours::textLav);
     g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawText ("GAIN", 44, 230, 84, 16, juce::Justification::centred);
-    g.drawText ("PEAK", 212, 230, 84, 16, juce::Justification::centred);
+    g.drawText ("GAIN", 52, 240, 88, 16, juce::Justification::centred);
+    g.drawText ("PEAK", 220, 240, 88, 16, juce::Justification::centred);
     g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText ("OUTPUT", 56, 410, 60, 16, juce::Justification::centred);
-    g.drawText ("MIX", 224, 410, 60, 16, juce::Justification::centred);
+    g.drawText ("ATTACK",  44, 346, 72, 14, juce::Justification::centred);
+    g.drawText ("RELEASE", 144, 346, 72, 14, juce::Justification::centred);
+    g.drawText ("DRIVE",   244, 346, 72, 14, juce::Justification::centred);
+    g.drawText ("OUTPUT",  91, 538, 58, 14, juce::Justification::centred);
+    g.drawText ("MIX",     211, 538, 58, 14, juce::Justification::centred);
 }
 
 void ZooTronAudioProcessorEditor::resized()
 {
-    led.setBounds (293, 35, 20, 20);
-    presetBar.setBounds (28, 84, 284, 40);
+    led.setBounds (316, 40, 18, 18);
+    presetBar.setBounds (30, 88, 300, 40);
 
-    gain.setBounds (44, 140, 84, 84);
-    peak.setBounds (212, 140, 84, 84);
+    gain.setBounds (52, 150, 88, 88);
+    peak.setBounds (220, 150, 88, 88);
 
-    rangeSw->setBounds (40, 250, 80, 82);
-    modeSw->setBounds (130, 250, 80, 82);
-    dirSw->setBounds (220, 250, 80, 82);
+    attack.setBounds (44, 272, 72, 72);
+    release.setBounds (144, 272, 72, 72);
+    drive.setBounds (244, 272, 72, 72);
 
-    output.setBounds (56, 348, 60, 60);
-    mix.setBounds (224, 348, 60, 60);
+    rangeSw->setBounds (40, 374, 80, 84);
+    modeSw->setBounds (140, 374, 80, 84);
+    dirSw->setBounds (240, 374, 80, 84);
 
-    footswitch.setBounds (110, 424, 120, 140);
+    output.setBounds (91, 478, 58, 58);
+    mix.setBounds (211, 478, 58, 58);
+
+    footswitch.setBounds (130, 552, 100, 138);
 }
 
 void ZooTronAudioProcessorEditor::timerCallback()

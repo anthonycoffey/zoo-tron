@@ -59,6 +59,28 @@ struct SVFState
         const float hp = v0 - c.k * v1 - v2;
         return { v2, v1, hp }; // lp, bp, hp
     }
+
+    /*  Nonlinear variant: the integrator capacitor states are soft-clipped each
+        sample. Below the headroom it is essentially linear; as resonance rings
+        up it saturates instead of blowing up — analog filters self-limit this
+        way, and it's what stops a parked resonant peak from "swelling" ugly on
+        certain notes. */
+    inline SVFOutputs processNL (const SVFCoeffs& c, float v0, float headroom) noexcept
+    {
+        const float v3 = v0 - ic2eq;
+        const float v1 = c.a1 * ic1eq + c.a2 * v3;
+        const float v2 = ic2eq + c.a2 * ic1eq + c.a3 * v3;
+
+        ic1eq = 2.0f * v1 - ic1eq;
+        ic2eq = 2.0f * v2 - ic2eq;
+
+        const float inv = 1.0f / headroom;
+        ic1eq = headroom * std::tanh (ic1eq * inv);
+        ic2eq = headroom * std::tanh (ic2eq * inv);
+
+        const float hp = v0 - c.k * v1 - v2;
+        return { v2, v1, hp };
+    }
 };
 
 } // namespace zt

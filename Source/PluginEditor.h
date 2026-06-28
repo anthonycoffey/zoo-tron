@@ -95,8 +95,8 @@ private:
     ZooTronAudioProcessor& audioProcessor;
     ZooLookAndFeel lnf;
 
-    juce::Slider gain, peak, output, mix;
-    std::unique_ptr<SA> gainAtt, peakAtt, outputAtt, mixAtt;
+    juce::Slider gain, peak, attack, release, drive, output, mix;
+    std::unique_ptr<SA> gainAtt, peakAtt, attackAtt, releaseAtt, driveAtt, outputAtt, mixAtt;
 
     std::unique_ptr<PedalSwitch> rangeSw, modeSw, dirSw;
     PresetBar  presetBar;

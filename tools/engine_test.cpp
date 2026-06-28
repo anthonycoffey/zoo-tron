@@ -98,6 +98,54 @@ int main()
     ok &= sweepOk;
     printf ("  -> louder opens filter more: %s\n\n", sweepOk ? "OK" : "FAIL");
 
+    printf ("== Nonlinear resonance self-limits (kills runaway swell) ==\n");
+    {
+        const double fc = 800.0, qHigh = 16.0;
+        const auto c = zt::computeSVFCoeffs (fc, qHigh, fs);
+        zt::SVFState lin, nl;
+        float linPeak = 0.0f, nlPeak = 0.0f; bool nlFinite = true;
+        const int N = (int) (fs * 1.0);
+        for (int n = 0; n < N; ++n)
+        {
+            const float x = 0.5f * (float) std::sin (2.0 * zt::kPi * fc * n / fs); // drive AT resonance
+            linPeak = std::max (linPeak, std::fabs (lin.process (c, x).bp));
+            const float y = nl.processNL (c, x, 3.0f).bp;
+            nlPeak = std::max (nlPeak, std::fabs (y));
+            if (! std::isfinite (y)) nlFinite = false;
+        }
+        printf ("  driven at resonance (Q=16): linear peak=%.2f  nonlinear peak=%.2f  finite=%s\n",
+                linPeak, nlPeak, nlFinite ? "yes" : "NO");
+        const bool nlOk = nlFinite && nlPeak < linPeak * 0.9f;
+        ok &= nlOk;
+        printf ("  -> nonlinear path stays bounded: %s\n\n", nlOk ? "OK" : "FAIL");
+    }
+
+    printf ("== Detector high-pass tames low-note over-trigger ==\n");
+    {
+        auto envForTone = [&] (double freq)
+        {
+            zt::MuTronEngine eng; eng.prepare (fs, 1);
+            eng.setSensitivity (5.0f); eng.setPeak (5.0f);
+            const int N = 2048; std::vector<float> buf ((size_t) N);
+            float maxEnv = 0.0f;
+            for (int blk = 0; blk < 16; ++blk)
+            {
+                for (int n = 0; n < N; ++n)
+                    buf[(size_t) n] = 0.3f * (float) std::sin (2.0 * zt::kPi * freq * (blk * N + n) / fs);
+                float* ch[1] = { buf.data() };
+                eng.process (ch, 1, N);
+                maxEnv = std::max (maxEnv, eng.lastEnvelope());
+            }
+            return maxEnv;
+        };
+        const float lowEnv = envForTone (50.0);
+        const float midEnv = envForTone (300.0);
+        printf ("  50 Hz env=%.3f   300 Hz env=%.3f  (identical input level)\n", lowEnv, midEnv);
+        const bool hpOk = midEnv > lowEnv;
+        ok &= hpOk;
+        printf ("  -> lows trigger the sweep less than mids: %s\n\n", hpOk ? "OK" : "FAIL");
+    }
+
     printf ("%s\n", ok ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED");
     return ok ? 0 : 1;
 }

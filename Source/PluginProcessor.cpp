@@ -11,6 +11,9 @@ namespace ids
     constexpr auto output    = "output";
     constexpr auto mix       = "mix";
     constexpr auto bypass    = "bypass";
+    constexpr auto attack    = "attack";
+    constexpr auto release   = "release";
+    constexpr auto drive     = "drive";
 }
 
 ZooTronAudioProcessor::ZooTronAudioProcessor()
@@ -27,6 +30,9 @@ ZooTronAudioProcessor::ZooTronAudioProcessor()
     pOutput    = apvts.getRawParameterValue (ids::output);
     pMix       = apvts.getRawParameterValue (ids::mix);
     pBypass    = apvts.getRawParameterValue (ids::bypass);
+    pAttack    = apvts.getRawParameterValue (ids::attack);
+    pRelease   = apvts.getRawParameterValue (ids::release);
+    pDrive     = apvts.getRawParameterValue (ids::drive);
     bypassParam = apvts.getParameter (ids::bypass);
 }
 
@@ -66,6 +72,18 @@ ZooTronAudioProcessor::createParameterLayout()
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { ids::bypass, 1 }, "Bypass", false));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::attack, 1 }, "Attack",
+        NormalisableRange<float> (1.0f, 50.0f, 0.1f, 0.4f), 8.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::release, 1 }, "Release",
+        NormalisableRange<float> (20.0f, 600.0f, 1.0f, 0.45f), 180.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::drive, 1 }, "Drive",
+        NormalisableRange<float> (0.0f, 10.0f, 0.01f), 2.0f));
 
     return layout;
 }
@@ -121,6 +139,9 @@ void ZooTronAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     engine.setRange (pRange->load() < 0.5f ? zt::Range::Low : zt::Range::High);
     engine.setMode (static_cast<zt::Mode> ((int) pMode->load()));
     engine.setDirection (pDirection->load() < 0.5f ? zt::Direction::Up : zt::Direction::Down);
+    engine.setAttack (pAttack->load());
+    engine.setRelease (pRelease->load());
+    engine.setDrive (pDrive->load());
 
     outGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (pOutput->load()));
     mixSmoothed.setTargetValue (juce::jlimit (0.0f, 1.0f, pMix->load() * 0.01f));

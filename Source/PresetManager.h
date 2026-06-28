@@ -14,7 +14,7 @@ struct ZooPreset
 {
     juce::String name;
     int   range, mode, direction; // choice indices: range 0=Lo/1=Hi, mode 0=LP/1=BP/2=HP, dir 0=Up/1=Down
-    float gain, peak, output, mix;
+    float gain, peak, attack, release, drive, output, mix;
 };
 
 class PresetManager
@@ -47,10 +47,13 @@ public:
         return (int) v ("range")     != p.range
             || (int) v ("mode")      != p.mode
             || (int) v ("direction") != p.direction
-            || std::abs (v ("gain")   - p.gain)   > 0.02f
-            || std::abs (v ("peak")   - p.peak)   > 0.02f
-            || std::abs (v ("output") - p.output) > 0.05f
-            || std::abs (v ("mix")    - p.mix)    > 0.05f;
+            || std::abs (v ("gain")    - p.gain)    > 0.02f
+            || std::abs (v ("peak")    - p.peak)    > 0.02f
+            || std::abs (v ("attack")  - p.attack)  > 0.2f
+            || std::abs (v ("release") - p.release) > 1.0f
+            || std::abs (v ("drive")   - p.drive)   > 0.02f
+            || std::abs (v ("output")  - p.output)  > 0.05f
+            || std::abs (v ("mix")     - p.mix)     > 0.05f;
     }
 
     juce::String displayName() const
@@ -67,10 +70,13 @@ public:
         setP ("range",     (float) p.range);
         setP ("mode",      (float) p.mode);
         setP ("direction", (float) p.direction);
-        setP ("gain",   p.gain);
-        setP ("peak",   p.peak);
-        setP ("output", p.output);
-        setP ("mix",    p.mix);
+        setP ("gain",    p.gain);
+        setP ("peak",    p.peak);
+        setP ("attack",  p.attack);
+        setP ("release", p.release);
+        setP ("drive",   p.drive);
+        setP ("output",  p.output);
+        setP ("mix",     p.mix);
         apvts.state.setProperty (indexProp, i, nullptr);
     }
 
@@ -87,17 +93,17 @@ private:
     juce::AudioProcessorValueTreeState& apvts;
     const juce::Identifier indexProp { "presetIndex" };
 
-    //                name            range mode dir  gain  peak  out    mix
+    //                name           rng md dir  gain  peak  atk   rel    drv   out    mix
     const std::vector<ZooPreset> presets {
-        { "Classic Funk",   1, 1, 0,  5.5f, 6.0f, 0.0f, 100.0f }, // the signature quack
-        { "Bootsy",         0, 1, 0,  6.0f, 5.5f, 0.0f, 100.0f }, // deep bass funk
-        { "Garcia",         1, 0, 0,  4.5f, 4.0f, 0.0f, 100.0f }, // smooth guitar lead
-        { "Quack Attack",   1, 1, 0,  7.5f, 8.0f, 0.0f, 100.0f }, // aggressive, near self-osc
-        { "Cosmic Slop",    0, 1, 1,  5.5f, 6.0f, 0.0f, 100.0f }, // down-sweep bass
-        { "Higher Ground",  1, 1, 0,  6.5f, 7.0f, 0.0f, 100.0f }, // clav / keys funk
-        { "Vocal Wah",      1, 0, 0,  5.0f, 5.0f, 0.0f, 100.0f }, // talky low-pass
-        { "Sub Sweep",      0, 0, 0,  5.0f, 3.5f, 0.0f, 100.0f }, // round low filter
-        { "Synth Sweep",    1, 2, 0,  5.5f, 6.0f, 0.0f, 100.0f }, // bright high-pass
-        { "Down & Out",     1, 1, 1,  5.0f, 6.0f, 0.0f, 100.0f }, // reverse sweep
+        { "Classic Funk",  1, 1, 0,  5.5f, 6.0f,  8.0f, 180.0f, 2.0f, 0.0f, 100.0f },
+        { "Bootsy",        0, 1, 0,  6.0f, 5.5f, 12.0f, 260.0f, 3.0f, 0.0f, 100.0f },
+        { "Garcia",        1, 0, 0,  4.5f, 4.0f,  6.0f, 150.0f, 1.5f, 0.0f, 100.0f },
+        { "Quack Attack",  1, 1, 0,  7.5f, 8.0f,  3.0f,  90.0f, 4.0f, 0.0f, 100.0f },
+        { "Cosmic Slop",   0, 1, 1,  5.5f, 6.0f, 14.0f, 300.0f, 3.0f, 0.0f, 100.0f },
+        { "Higher Ground", 1, 1, 0,  6.5f, 7.0f,  5.0f, 120.0f, 3.5f, 0.0f, 100.0f },
+        { "Vocal Wah",     1, 0, 0,  5.0f, 5.0f, 10.0f, 200.0f, 2.0f, 0.0f, 100.0f },
+        { "Sub Sweep",     0, 0, 0,  5.0f, 3.5f, 12.0f, 240.0f, 1.5f, 0.0f, 100.0f },
+        { "Synth Sweep",   1, 2, 0,  5.5f, 6.0f,  6.0f, 160.0f, 3.0f, 0.0f, 100.0f },
+        { "Down & Out",    1, 1, 1,  5.0f, 6.0f,  9.0f, 220.0f, 2.5f, 0.0f, 100.0f },
     };
 };

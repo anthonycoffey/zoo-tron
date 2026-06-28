@@ -63,6 +63,9 @@ private:
     std::atomic<float>* pOutput    = nullptr;
     std::atomic<float>* pMix       = nullptr;
     std::atomic<float>* pBypass    = nullptr;
+    std::atomic<float>* pAttack    = nullptr;
+    std::atomic<float>* pRelease   = nullptr;
+    std::atomic<float>* pDrive     = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZooTronAudioProcessor)
 };
