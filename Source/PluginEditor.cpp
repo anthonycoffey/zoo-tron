@@ -20,6 +20,8 @@ namespace colours
     const juce::Colour footRing  { 0xff13102a };
     const juce::Colour footMetal { 0xffc2c6d0 };
     const juce::Colour footCap   { 0xffaeb4c0 };
+    const juce::Colour grid      { 0xff2a2550 };
+    const juce::Colour grid0     { 0xff241f48 };
 }
 
 //==============================================================================
@@ -72,7 +74,6 @@ void EnvLED::paint (juce::Graphics& g)
 
     g.setColour (colours::wellDark);
     g.fillEllipse (dot);
-
     const float l = juce::jlimit (0.0f, 1.0f, level);
     if (l > 0.001f)
     {
@@ -83,6 +84,83 @@ void EnvLED::paint (juce::Graphics& g)
     }
     g.setColour (colours::wellStroke);
     g.drawEllipse (dot, 1.0f);
+}
+
+//==============================================================================
+void FilterScope::setData (float c, float q, int m)
+{
+    if (! juce::approximatelyEqual (c, cutoff) || ! juce::approximatelyEqual (q, qv) || m != mode)
+    {
+        cutoff = c; qv = q; mode = m;
+        repaint();
+    }
+}
+
+void FilterScope::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (colours::screenBg);
+    g.fillRoundedRectangle (b, 8.0f);
+
+    auto area = b.reduced (10.0f);
+    const float L = area.getX(), R = area.getRight(), T = area.getY(), B = area.getBottom();
+    const float W = area.getWidth(), H = area.getHeight();
+    const float lmin = std::log10 (20.0f), lmax = std::log10 (20000.0f);
+
+    auto fToX = [&] (float f) { return L + (std::log10 (f) - lmin) / (lmax - lmin) * W; };
+    auto xToF = [&] (float xx) { return std::pow (10.0f, lmin + (xx - L) / W * (lmax - lmin)); };
+    const float dbMax = 18.0f, dbMin = -30.0f;
+    auto dbToY = [&] (float db) { return T + (dbMax - db) / (dbMax - dbMin) * H; };
+
+    g.setColour (colours::grid);
+    for (float f : { 100.0f, 1000.0f, 10000.0f })
+        g.drawLine (fToX (f), T, fToX (f), B, 1.0f);
+    g.setColour (colours::grid0);
+    g.drawLine (L, dbToY (0.0f), R, dbToY (0.0f), 1.0f);
+
+    g.setColour (colours::textMute);
+    g.setFont (juce::FontOptions (9.0f));
+    g.drawText ("100", (int) fToX (100.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+    g.drawText ("1k",  (int) fToX (1000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+    g.drawText ("10k", (int) fToX (10000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+
+    const float qc = juce::jmax (0.2f, qv);
+    auto magAt = [&] (float w)
+    {
+        const float denom = std::sqrt ((1.0f - w * w) * (1.0f - w * w) + (w / qc) * (w / qc));
+        const float m = (mode == 0) ? 1.0f / denom
+                      : (mode == 1) ? (w / qc) / denom
+                                    : (w * w) / denom;
+        return 20.0f * std::log10 (juce::jmax (1.0e-4f, m));
+    };
+
+    juce::Path curve;
+    bool started = false;
+    for (float x = L; x <= R; x += 2.0f)
+    {
+        const float y = juce::jlimit (T, B, dbToY (magAt (xToF (x) / cutoff)));
+        if (! started) { curve.startNewSubPath (x, y); started = true; }
+        else             curve.lineTo (x, y);
+    }
+
+    juce::Path fill = curve;
+    fill.lineTo (R, B); fill.lineTo (L, B); fill.closeSubPath();
+    g.setColour (colours::teal.withAlpha (0.16f));
+    g.fillPath (fill);
+    g.setColour (colours::teal);
+    g.strokePath (curve, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    const float px = juce::jlimit (L, R, fToX (cutoff));
+    const float py = juce::jlimit (T, B, dbToY (magAt (1.0f)));
+    g.setColour (colours::teal.withAlpha (0.4f));
+    g.drawLine (px, T, px, B, 1.0f);
+    g.setColour (colours::teal.withAlpha (0.25f));
+    g.fillEllipse (juce::Rectangle<float> (18.0f, 18.0f).withCentre ({ px, py }));
+    g.setColour (juce::Colour (0xffd6fff4));
+    g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ px, py }));
+
+    g.setColour (colours::wellStroke);
+    g.drawRoundedRectangle (b, 8.0f, 1.5f);
 }
 
 //==============================================================================
@@ -169,14 +247,14 @@ void PresetBar::paint (juce::Graphics& g)
     g.fillRoundedRectangle (screen.toFloat(), 6.0f);
 
     g.setColour (colours::teal);
-    g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 17.0f, juce::Font::plain));
+    g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 16.0f, juce::Font::plain));
     g.drawText (name.toUpperCase(), screen, juce::Justification::centred);
 
     auto drawArrow = [&] (juce::Rectangle<int> r, bool left)
     {
         const auto c = r.getCentre().toFloat();
         g.setColour (colours::arrowBg);
-        g.fillEllipse (juce::Rectangle<float> (26.0f, 26.0f).withCentre (c));
+        g.fillEllipse (juce::Rectangle<float> (24.0f, 24.0f).withCentre (c));
         juce::Path p;
         if (left) p.addTriangle (c.x - 5, c.y, c.x + 5, c.y - 7, c.x + 5, c.y + 7);
         else      p.addTriangle (c.x + 5, c.y, c.x - 5, c.y - 7, c.x - 5, c.y + 7);
@@ -190,16 +268,52 @@ void PresetBar::paint (juce::Graphics& g)
 void PresetBar::mouseDown (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
-    if (leftArrow.contains (pos))       presets.prev();
-    else if (rightArrow.contains (pos)) presets.next();
-    else if (screen.contains (pos))
+    if (leftArrow.contains (pos))  { presets.prev(); return; }
+    if (rightArrow.contains (pos)) { presets.next(); return; }
+    if (! screen.contains (pos))   return;
+
+    const int cur = presets.currentIndex();
+    const auto userFiles = presets.userPresetFiles();
+
+    juce::PopupMenu m;
+    for (int i = 0; i < presets.getNumPresets(); ++i)
+        m.addItem (i + 1, presets.getName (i), true, i == cur);
+
+    if (userFiles.size() > 0)
     {
-        juce::PopupMenu m;
-        for (int i = 0; i < presets.getNumPresets(); ++i)
-            m.addItem (i + 1, presets.getName (i), true, i == presets.currentIndex());
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                         [this] (int r) { if (r > 0) presets.load (r - 1); });
+        m.addSeparator();
+        for (int i = 0; i < userFiles.size(); ++i)
+            m.addItem (1001 + i, userFiles[i].getFileNameWithoutExtension(), true, false);
     }
+    m.addSeparator();
+    m.addItem (9999, "Save current preset...");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                     [this, userFiles] (int r)
+                     {
+                         if (r <= 0) return;
+                         if (r == 9999) { showSaveDialog(); return; }
+                         if (r >= 1001 && r < 1001 + userFiles.size()) { presets.loadUserPreset (userFiles[r - 1001]); return; }
+                         if (r >= 1 && r <= presets.getNumPresets()) presets.load (r - 1);
+                     });
+}
+
+void PresetBar::showSaveDialog()
+{
+    saveDialog = std::make_unique<juce::AlertWindow> ("Save preset", "Name this preset:",
+                                                      juce::MessageBoxIconType::NoIcon);
+    saveDialog->addTextEditor ("name", "My Tone");
+    saveDialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    saveDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    saveDialog->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int r)
+    {
+        if (r == 1 && saveDialog != nullptr)
+        {
+            const auto n = saveDialog->getTextEditorContents ("name");
+            if (n.isNotEmpty()) presets.saveUserPreset (n);
+        }
+        saveDialog.reset();
+    }), false);
 }
 
 //==============================================================================
@@ -239,7 +353,6 @@ void Footswitch::paint (juce::Graphics& g)
         g.drawEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre (ledC), 1.0f);
     }
 
-    // Simple stomp: outer ring + metal disc + cap. Sits well below the LED.
     const juce::Point<float> stompC ((float) b.getCentreX(), (float) b.getY() + 74.0f);
     const float r = 24.0f;
     g.setColour (colours::footRing);
@@ -263,11 +376,14 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
       footswitch (*p.apvts.getParameter ("bypass"))
 {
     setLookAndFeel (&lnf);
+    addAndMakeVisible (scope);
 
-    styleKnob (gain); styleKnob (peak); styleKnob (output); styleKnob (mix);
+    styleKnob (gain); styleKnob (peak); styleKnob (contour);
     styleKnob (attack); styleKnob (release); styleKnob (drive);
+    styleKnob (output); styleKnob (mix);
     gainAtt    = std::make_unique<SA> (p.apvts, "gain",    gain);
     peakAtt    = std::make_unique<SA> (p.apvts, "peak",    peak);
+    contourAtt = std::make_unique<SA> (p.apvts, "contour", contour);
     attackAtt  = std::make_unique<SA> (p.apvts, "attack",  attack);
     releaseAtt = std::make_unique<SA> (p.apvts, "release", release);
     driveAtt   = std::make_unique<SA> (p.apvts, "drive",   drive);
@@ -288,7 +404,7 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
     addAndMakeVisible (footswitch);
     addAndMakeVisible (led);
 
-    setSize (360, 700);
+    setSize (600, 620);
     startTimerHz (30);
 }
 
@@ -311,17 +427,16 @@ void ZooTronAudioProcessorEditor::paint (juce::Graphics& g)
     auto b = getLocalBounds().toFloat();
 
     g.setColour (colours::bodyEdge);
-    g.fillRoundedRectangle (b.reduced (6.0f), 24.0f);
+    g.fillRoundedRectangle (b.reduced (6.0f), 26.0f);
     g.setColour (juce::Colour (0xff4a4385));
-    g.drawRoundedRectangle (b.reduced (6.0f), 24.0f, 1.5f);
+    g.drawRoundedRectangle (b.reduced (6.0f), 26.0f, 1.5f);
 
     auto face = b.reduced (14.0f);
     g.setColour (colours::face);
-    g.fillRoundedRectangle (face, 18.0f);
-
+    g.fillRoundedRectangle (face, 20.0f);
     juce::Path band;
-    band.addRoundedRectangle (face.getX(), face.getY(), face.getWidth(), 70.0f,
-                              18.0f, 18.0f, true, true, false, false);
+    band.addRoundedRectangle (face.getX(), face.getY(), face.getWidth(), 64.0f,
+                              20.0f, 20.0f, true, true, false, false);
     g.setColour (colours::faceTop);
     g.fillPath (band);
 
@@ -332,55 +447,60 @@ void ZooTronAudioProcessorEditor::paint (juce::Graphics& g)
         g.setColour (colours::bodyEdge);
         g.fillEllipse (sx - 2.5f, sy - 2.5f, 5, 5);
     };
-    screw (face.getX() + 20, face.getY() + 22);
-    screw (face.getRight() - 20, face.getY() + 22);
-    screw (face.getX() + 20, face.getBottom() - 22);
-    screw (face.getRight() - 20, face.getBottom() - 22);
+    screw (face.getX() + 22, face.getY() + 22);
+    screw (face.getRight() - 22, face.getY() + 22);
+    screw (face.getX() + 22, face.getBottom() - 22);
+    screw (face.getRight() - 22, face.getBottom() - 22);
 
     g.setColour (colours::cream);
-    g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    g.drawText ("ZOO-TRON III", juce::Rectangle<int> (0, 34, 360, 28), juce::Justification::centred);
+    g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
+    g.drawText ("ZOO-TRON III", 40, 30, 260, 28, juce::Justification::centredLeft);
     g.setColour (colours::textMute);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("envelope filter", juce::Rectangle<int> (0, 62, 360, 14), juce::Justification::centred);
-    g.drawText ("ENV", juce::Rectangle<int> (300, 60, 44, 12), juce::Justification::centred);
+    g.drawText ("envelope filter", 42, 56, 260, 14, juce::Justification::centredLeft);
+    g.drawText ("ENV", 538, 50, 44, 12, juce::Justification::centred);
 
     g.setColour (colours::textLav);
     g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawText ("GAIN", 52, 240, 88, 16, juce::Justification::centred);
-    g.drawText ("PEAK", 220, 240, 88, 16, juce::Justification::centred);
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText ("ATTACK",  44, 346, 72, 14, juce::Justification::centred);
-    g.drawText ("RELEASE", 144, 346, 72, 14, juce::Justification::centred);
-    g.drawText ("DRIVE",   244, 346, 72, 14, juce::Justification::centred);
-    g.drawText ("OUTPUT",  91, 538, 58, 14, juce::Justification::centred);
-    g.drawText ("MIX",     211, 538, 58, 14, juce::Justification::centred);
+    g.drawText ("GAIN",    64, 398, 68, 14, juce::Justification::centred);
+    g.drawText ("PEAK",   199, 398, 68, 14, juce::Justification::centred);
+    g.drawText ("CONTOUR",334, 398, 68, 14, juce::Justification::centred);
+    g.drawText ("ATTACK", 469, 398, 68, 14, juce::Justification::centred);
+    g.drawText ("RELEASE", 64, 490, 68, 14, juce::Justification::centred);
+    g.drawText ("DRIVE",  199, 490, 68, 14, juce::Justification::centred);
+    g.drawText ("OUTPUT", 334, 490, 68, 14, juce::Justification::centred);
+    g.drawText ("MIX",    469, 490, 68, 14, juce::Justification::centred);
 }
 
 void ZooTronAudioProcessorEditor::resized()
 {
-    led.setBounds (316, 40, 18, 18);
-    presetBar.setBounds (30, 88, 300, 40);
+    led.setBounds (551, 29, 18, 18);
+    presetBar.setBounds (300, 24, 220, 38);
 
-    gain.setBounds (52, 150, 88, 88);
-    peak.setBounds (220, 150, 88, 88);
+    scope.setBounds (26, 92, 548, 212);
 
-    attack.setBounds (44, 272, 72, 72);
-    release.setBounds (144, 272, 72, 72);
-    drive.setBounds (244, 272, 72, 72);
+    gain.setBounds    (64, 324, 68, 68);
+    peak.setBounds    (199, 324, 68, 68);
+    contour.setBounds (334, 324, 68, 68);
+    attack.setBounds  (469, 324, 68, 68);
 
-    rangeSw->setBounds (40, 374, 80, 84);
-    modeSw->setBounds (140, 374, 80, 84);
-    dirSw->setBounds (240, 374, 80, 84);
+    release.setBounds (64, 416, 68, 68);
+    drive.setBounds   (199, 416, 68, 68);
+    output.setBounds  (334, 416, 68, 68);
+    mix.setBounds     (469, 416, 68, 68);
 
-    output.setBounds (91, 478, 58, 58);
-    mix.setBounds (211, 478, 58, 58);
+    rangeSw->setBounds (70, 506, 80, 86);
+    modeSw->setBounds  (190, 506, 80, 86);
+    dirSw->setBounds   (310, 506, 80, 86);
 
-    footswitch.setBounds (130, 552, 100, 138);
+    footswitch.setBounds (450, 498, 100, 114);
 }
 
 void ZooTronAudioProcessorEditor::timerCallback()
 {
     led.setLevel (audioProcessor.envelopeOut.load());
     presetBar.setDisplayName (audioProcessor.presetManager.displayName());
+
+    const int mode = (int) audioProcessor.apvts.getRawParameterValue ("mode")->load();
+    scope.setData (audioProcessor.cutoffOut.load(), audioProcessor.resonanceOut.load(), mode);
 }

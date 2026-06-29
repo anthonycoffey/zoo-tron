@@ -4,7 +4,6 @@
 #include "PluginProcessor.h"
 
 //==============================================================================
-// Cream chicken-head knob with a dark pointer and a thin teal value arc.
 class ZooLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -15,7 +14,6 @@ public:
 };
 
 //==============================================================================
-// The optical "lamp" — pulses with the vactrol light level.
 class EnvLED : public juce::Component
 {
 public:
@@ -26,7 +24,21 @@ private:
 };
 
 //==============================================================================
-// A 2- or 3-position bat switch bound to a choice parameter.
+// Live filter-response display: draws the analog magnitude curve for the
+// current cutoff / Q / mode, with a playhead at the current cutoff. Updated
+// ~30fps from the processor's published filter state, so it animates with the
+// sweep as you play.
+class FilterScope : public juce::Component
+{
+public:
+    void setData (float cutoffHz, float q, int mode);
+    void paint (juce::Graphics&) override;
+private:
+    float cutoff = 1000.0f, qv = 2.0f;
+    int   mode = 1;
+};
+
+//==============================================================================
 class PedalSwitch : public juce::Component
 {
 public:
@@ -38,14 +50,13 @@ private:
     void applyValue (float denorm);
     juce::RangedAudioParameter& param;
     juce::StringArray labels;
-    std::vector<int> indices;   // parameter index for each slot, top -> bottom
+    std::vector<int> indices;
     juce::String switchName;
     int slot = 0;
     juce::ParameterAttachment attachment;
 };
 
 //==============================================================================
-// Digital preset readout: ◀  NAME  ▶, click the name for the full list.
 class PresetBar : public juce::Component
 {
 public:
@@ -55,13 +66,14 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void setDisplayName (const juce::String& n) { name = n; repaint(); }
 private:
+    void showSaveDialog();
     PresetManager& presets;
     juce::String name;
     juce::Rectangle<int> leftArrow, rightArrow, screen;
+    std::unique_ptr<juce::AlertWindow> saveDialog;
 };
 
 //==============================================================================
-// Stomp footswitch with a status LED above it, bound to the bypass parameter.
 class Footswitch : public juce::Component
 {
 public:
@@ -95,8 +107,9 @@ private:
     ZooTronAudioProcessor& audioProcessor;
     ZooLookAndFeel lnf;
 
-    juce::Slider gain, peak, attack, release, drive, output, mix;
-    std::unique_ptr<SA> gainAtt, peakAtt, attackAtt, releaseAtt, driveAtt, outputAtt, mixAtt;
+    FilterScope scope;
+    juce::Slider gain, peak, contour, attack, release, drive, output, mix;
+    std::unique_ptr<SA> gainAtt, peakAtt, contourAtt, attackAtt, releaseAtt, driveAtt, outputAtt, mixAtt;
 
     std::unique_ptr<PedalSwitch> rangeSw, modeSw, dirSw;
     PresetBar  presetBar;

@@ -14,6 +14,7 @@ namespace ids
     constexpr auto attack    = "attack";
     constexpr auto release   = "release";
     constexpr auto drive     = "drive";
+    constexpr auto contour   = "contour";
 }
 
 ZooTronAudioProcessor::ZooTronAudioProcessor()
@@ -33,6 +34,7 @@ ZooTronAudioProcessor::ZooTronAudioProcessor()
     pAttack    = apvts.getRawParameterValue (ids::attack);
     pRelease   = apvts.getRawParameterValue (ids::release);
     pDrive     = apvts.getRawParameterValue (ids::drive);
+    pContour   = apvts.getRawParameterValue (ids::contour);
     bypassParam = apvts.getParameter (ids::bypass);
 }
 
@@ -84,6 +86,10 @@ ZooTronAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ids::drive, 1 }, "Drive",
         NormalisableRange<float> (0.0f, 10.0f, 0.01f), 2.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::contour, 1 }, "Contour",
+        NormalisableRange<float> (30.0f, 200.0f, 1.0f, 0.7f), 90.0f));
 
     return layout;
 }
@@ -142,6 +148,7 @@ void ZooTronAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     engine.setAttack (pAttack->load());
     engine.setRelease (pRelease->load());
     engine.setDrive (pDrive->load());
+    engine.setContour (pContour->load());
 
     outGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (pOutput->load()));
     mixSmoothed.setTargetValue (juce::jlimit (0.0f, 1.0f, pMix->load() * 0.01f));
@@ -179,6 +186,8 @@ void ZooTronAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     envelopeOut.store (engine.lastEnvelope());
+    cutoffOut.store (engine.lastCutoff());
+    resonanceOut.store (engine.lastQ());
 }
 
 juce::AudioProcessorEditor* ZooTronAudioProcessor::createEditor()

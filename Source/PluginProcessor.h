@@ -38,8 +38,11 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     PresetManager presetManager { apvts };
 
-    // Read by the editor's LED meter (vactrol "light" level, 0..1).
-    std::atomic<float> envelopeOut { 0.0f };
+    // Read by the editor: vactrol "light" level (0..1) and the live filter state
+    // (current cutoff Hz + Q) that drives the response-curve display.
+    std::atomic<float> envelopeOut  { 0.0f };
+    std::atomic<float> cutoffOut    { 1000.0f };
+    std::atomic<float> resonanceOut { 2.0f };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -66,6 +69,7 @@ private:
     std::atomic<float>* pAttack    = nullptr;
     std::atomic<float>* pRelease   = nullptr;
     std::atomic<float>* pDrive     = nullptr;
+    std::atomic<float>* pContour   = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZooTronAudioProcessor)
 };

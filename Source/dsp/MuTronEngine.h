@@ -86,12 +86,15 @@ public:
     void setAttack (float ms) noexcept  { attackMs  = ms; updateVactrol(); }
     void setRelease (float ms) noexcept { releaseMs = ms; updateVactrol(); }
     void setDrive (float drive0to10) noexcept { drive = std::clamp (drive0to10 / 10.0f, 0.0f, 1.0f); }
+    void setContour (float hz) noexcept { contourHz = hz; detHPCoeffs = computeSVFCoeffs (contourHz, 0.707, fs); }
 
     void setRange (Range r) noexcept     { range = r; updateRange(); }
     void setMode (Mode m) noexcept       { mode = m; }
     void setDirection (Direction d) noexcept { direction = d; }
 
     float lastEnvelope() const noexcept { return vactrol.current(); }
+    float lastCutoff()   const noexcept { return lastFc; }   // for the live filter display
+    float lastQ()        const noexcept { return q; }
 
     // ---- audio --------------------------------------------------------------
     void process (float* const* data, int numCh, int numSamples) noexcept
@@ -114,6 +117,7 @@ public:
             const float v     = vactrol.process (cv);
             const float sweep = (direction == Direction::Up) ? v : (1.0f - v);
             const float fc    = fcMin * std::pow (2.0f, octaves * sweep);
+            lastFc = fc;
 
             const SVFCoeffs c = computeSVFCoeffs (fc, q, fs);
 
@@ -157,6 +161,8 @@ private:
     float     attackMs    = 8.0f;
     float     releaseMs   = 180.0f;
     float     drive       = 0.2f;
+    float     contourHz   = 90.0f;
+    float     lastFc      = 1000.0f;
     float     fcMin       = 180.0f;
     float     octaves     = 4.25f;
     const float satHeadroom = 3.0f; // SVF self-limit threshold
