@@ -146,6 +146,53 @@ int main()
         printf ("  -> lows trigger the sweep less than mids: %s\n\n", hpOk ? "OK" : "FAIL");
     }
 
+    printf ("== LFO source sweeps the filter with no playing ==\n");
+    {
+        zt::MuTronEngine eng; eng.prepare (fs, 1);
+        eng.setSource (zt::Source::Lfo); eng.setLfoShape (0); eng.setLfoRate (4.0f);
+        eng.setRange (zt::Range::High); eng.setPeak (5.0f);
+        const int N = 1024; std::vector<float> buf ((size_t) N);
+        float fcLo = 1.0e9f, fcHi = -1.0e9f;
+        for (int blk = 0; blk < 48; ++blk) // ~1 s
+        {
+            for (int n = 0; n < N; ++n)
+                buf[(size_t) n] = 0.1f * (float) std::sin (2.0 * zt::kPi * 220.0 * (blk * N + n) / fs);
+            float* ch[1] = { buf.data() };
+            eng.process (ch, 1, N);
+            fcLo = std::min (fcLo, eng.lastCutoff());
+            fcHi = std::max (fcHi, eng.lastCutoff());
+        }
+        printf ("  LFO @4 Hz cutoff range: %.0f .. %.0f Hz\n", fcLo, fcHi);
+        const bool lfoOk = fcHi > fcLo * 1.5f;
+        ok &= lfoOk;
+        printf ("  -> sweeps on its own: %s\n\n", lfoOk ? "OK" : "FAIL");
+    }
+
+    printf ("== Stereo width detunes L/R cutoff ==\n");
+    {
+        zt::MuTronEngine eng; eng.prepare (fs, 2);
+        eng.setSource (zt::Source::Manual); eng.setManual (0.6f); eng.setWidth (1.0f);
+        eng.setPeak (6.0f); eng.setMode (zt::Mode::BandPass);
+        const int N = 2048; std::vector<float> L ((size_t) N), R ((size_t) N);
+        float maxDiff = 0.0f;
+        for (int blk = 0; blk < 8; ++blk)
+        {
+            for (int n = 0; n < N; ++n)
+            {
+                const float s = 0.3f * (float) std::sin (2.0 * zt::kPi * 500.0 * (blk * N + n) / fs);
+                L[(size_t) n] = R[(size_t) n] = s;
+            }
+            float* ch[2] = { L.data(), R.data() };
+            eng.process (ch, 2, N);
+            for (int n = 0; n < N; ++n)
+                maxDiff = std::max (maxDiff, std::fabs (L[(size_t) n] - R[(size_t) n]));
+        }
+        printf ("  width=100%%, identical mono in: max|L-R|=%.4f\n", maxDiff);
+        const bool wOk = maxDiff > 0.01f;
+        ok &= wOk;
+        printf ("  -> stereo image diverges: %s\n\n", wOk ? "OK" : "FAIL");
+    }
+
     printf ("%s\n", ok ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED");
     return ok ? 0 : 1;
 }

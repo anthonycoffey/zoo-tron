@@ -15,6 +15,11 @@ namespace ids
     constexpr auto release   = "release";
     constexpr auto drive     = "drive";
     constexpr auto contour   = "contour";
+    constexpr auto source    = "source";
+    constexpr auto lfoRate   = "lfoRate";
+    constexpr auto lfoShape  = "lfoShape";
+    constexpr auto lfoSync   = "lfoSync";
+    constexpr auto width     = "width";
 }
 
 ZooTronAudioProcessor::ZooTronAudioProcessor()
@@ -35,7 +40,13 @@ ZooTronAudioProcessor::ZooTronAudioProcessor()
     pRelease   = apvts.getRawParameterValue (ids::release);
     pDrive     = apvts.getRawParameterValue (ids::drive);
     pContour   = apvts.getRawParameterValue (ids::contour);
+    pSource    = apvts.getRawParameterValue (ids::source);
+    pLfoRate   = apvts.getRawParameterValue (ids::lfoRate);
+    pLfoShape  = apvts.getRawParameterValue (ids::lfoShape);
+    pLfoSync   = apvts.getRawParameterValue (ids::lfoSync);
+    pWidth     = apvts.getRawParameterValue (ids::width);
     bypassParam = apvts.getParameter (ids::bypass);
+    rateParam   = apvts.getParameter (ids::lfoRate);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -90,6 +101,25 @@ ZooTronAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ids::contour, 1 }, "Contour",
         NormalisableRange<float> (30.0f, 200.0f, 1.0f, 0.7f), 90.0f));
+
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ids::source, 1 }, "Source",
+        StringArray { "Envelope", "LFO", "Manual" }, 0));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::lfoRate, 1 }, "LFO Rate",
+        NormalisableRange<float> (0.05f, 20.0f, 0.01f, 0.3f), 2.0f));
+
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ids::lfoShape, 1 }, "LFO Shape",
+        StringArray { "Sine", "Triangle", "Square", "Random" }, 0));
+
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { ids::lfoSync, 1 }, "LFO Sync", false));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { ids::width, 1 }, "Width",
+        NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f));
 
     return layout;
 }
@@ -150,6 +180,34 @@ void ZooTronAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     engine.setDrive (pDrive->load());
     engine.setContour (pContour->load());
 
+    engine.setSource (static_cast<zt::Source> ((int) pSource->load()));
+    engine.setLfoShape ((int) pLfoShape->load());
+    engine.setWidth (pWidth->load() * 0.01f);
+    if (rateParam != nullptr)
+        engine.setManual (rateParam->convertTo0to1 (pLfoRate->load()));
+
+    float lfoHz = pLfoRate->load();
+    if (pLfoSync->load() >= 0.5f)
+    {
+        double bpm = 120.0;
+        if (auto* ph = getPlayHead())
+            if (auto pos = ph->getPosition())
+                if (auto b = pos->getBpm())
+                    bpm = *b;
+
+        const float beatsPerSec = (float) (bpm / 60.0);
+        const float beatsPer[] = { 4.0f, 3.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 0.375f, 0.25f, 0.1875f, 0.125f };
+        float best = lfoHz, bestDist = 1.0e9f;
+        for (float bp : beatsPer)
+        {
+            const float f = beatsPerSec / bp;
+            const float d = std::abs (f - lfoHz);
+            if (d < bestDist) { bestDist = d; best = f; }
+        }
+        lfoHz = best;
+    }
+    engine.setLfoRate (lfoHz);
+
     outGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (pOutput->load()));
     mixSmoothed.setTargetValue (juce::jlimit (0.0f, 1.0f, pMix->load() * 0.01f));
     bypassSmoothed.setTargetValue (pBypass->load() >= 0.5f ? 1.0f : 0.0f);
@@ -188,6 +246,13 @@ void ZooTronAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     envelopeOut.store (engine.lastEnvelope());
     cutoffOut.store (engine.lastCutoff());
     resonanceOut.store (engine.lastQ());
+
+    for (int n = 0; n < numSamples; ++n)
+    {
+        float monoOut = buffer.getSample (0, n);
+        if (numCh > 1) monoOut = 0.5f * (monoOut + buffer.getSample (1, n));
+        pushSampleForFFT (monoOut);
+    }
 }
 
 juce::AudioProcessorEditor* ZooTronAudioProcessor::createEditor()

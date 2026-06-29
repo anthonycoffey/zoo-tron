@@ -3,6 +3,7 @@
 #include "StateVariableFilter.h"
 #include "EnvelopeFollower.h"
 #include "Vactrol.h"
+#include "Lfo.h"
 
 #include <vector>
 #include <cmath>
@@ -13,10 +14,9 @@ namespace zt
 enum class Mode      { LowPass = 0, BandPass, HighPass };
 enum class Range     { Low = 0, High };
 enum class Direction { Up = 0, Down };
+enum class Source    { Envelope = 0, Lfo, Manual };
 
 // --- Antiderivative anti-aliased (ADAA) tanh waveshaper ----------------------
-// First-order ADAA: drives the signal hard for analog "warmth" without the
-// aliasing a naive tanh would smear across the spectrum when pushed.
 inline float logCoshStable (float x) noexcept
 {
     const float a = std::fabs (x);
@@ -36,11 +36,13 @@ inline float adaaTanh (float x, float& x1) noexcept
 /*  The full Mu-Tron III control chain:
 
         input -> [detector HPF] -> rectify/envelope -> [Gain]
-              -> vactrol[Attack/Release] -> cutoff law
+              -> vactrol[Attack/Release] ─┐
+                          LFO ────────────┤ Source -> cutoff law (+stereo spread)
+                          Manual ─────────┘
               -> nonlinear SVF -> [Drive] -> out
 
-    The detector HPF keeps fat low notes from over-triggering the sweep; the
-    nonlinear SVF self-limits resonance; the ADAA drive adds analog grit. */
+    The sweep "driver" (0..1) is whichever Source is selected. Width detunes the
+    per-channel cutoff so the filter image widens / moves across the stereo field. */
 
 class MuTronEngine
 {
@@ -49,15 +51,15 @@ public:
     {
         fs = sampleRate;
         env.prepare (sampleRate);
-
         vactrol.prepare (sampleRate);
-        updateVactrol();
+        lfo.prepare (sampleRate);
 
         detHP.reset();
-        detHPCoeffs = computeSVFCoeffs (90.0, 0.707, fs); // sidechain high-pass
+        detHPCoeffs = computeSVFCoeffs (90.0, 0.707, fs);
 
         states.assign ((size_t) std::max (1, numChannels), SVFState{});
         updateRange();
+        updateVactrol();
         reset();
     }
 
@@ -65,6 +67,7 @@ public:
     {
         env.reset();
         vactrol.reset();
+        lfo.reset();
         detHP.reset();
         for (auto& s : states) s.reset();
         driveX1[0] = driveX1[1] = 0.0f;
@@ -88,12 +91,18 @@ public:
     void setDrive (float drive0to10) noexcept { drive = std::clamp (drive0to10 / 10.0f, 0.0f, 1.0f); }
     void setContour (float hz) noexcept { contourHz = hz; detHPCoeffs = computeSVFCoeffs (contourHz, 0.707, fs); }
 
+    void setSource (Source s) noexcept   { source = s; }
+    void setLfoRate (float hz) noexcept  { lfo.setRate (hz); }
+    void setLfoShape (int s) noexcept    { lfo.setShape (s); }
+    void setManual (float pos0to1) noexcept { manualPos = std::clamp (pos0to1, 0.0f, 1.0f); }
+    void setWidth (float w0to1) noexcept { spread = std::clamp (w0to1, 0.0f, 1.0f) * 0.25f; }
+
     void setRange (Range r) noexcept     { range = r; updateRange(); }
     void setMode (Mode m) noexcept       { mode = m; }
     void setDirection (Direction d) noexcept { direction = d; }
 
-    float lastEnvelope() const noexcept { return vactrol.current(); }
-    float lastCutoff()   const noexcept { return lastFc; }   // for the live filter display
+    float lastEnvelope() const noexcept { return lastDriver; } // drives the LED + scope motion
+    float lastCutoff()   const noexcept { return lastFc; }
     float lastQ()        const noexcept { return q; }
 
     // ---- audio --------------------------------------------------------------
@@ -102,27 +111,38 @@ public:
         const int chans = std::min (numCh, (int) states.size());
         const float pre    = 1.0f + drive * 6.0f;
         const float makeup = 1.0f / (1.0f + drive * 1.2f);
+        const bool  perCh  = (chans == 2 && spread > 1.0e-4f);
 
         for (int n = 0; n < numSamples; ++n)
         {
-            // Mono-sum detector, high-passed so lows don't dominate the trigger.
+            // Envelope detection always runs (so the LED tracks in every mode).
             float mono = 0.0f;
             for (int ch = 0; ch < numCh; ++ch)
                 mono += data[ch][n];
             mono /= (float) numCh;
             const float detector = detHP.process (detHPCoeffs, mono).hp;
+            const float v = vactrol.process (std::clamp (env.process (detector) * sensitivity, 0.0f, 1.0f));
 
-            const float e     = env.process (detector);
-            const float cv    = std::clamp (e * sensitivity, 0.0f, 1.0f);
-            const float v     = vactrol.process (cv);
-            const float sweep = (direction == Direction::Up) ? v : (1.0f - v);
-            const float fc    = fcMin * std::pow (2.0f, octaves * sweep);
-            lastFc = fc;
+            const float lfoVal = lfo.process();
+            const float driver = (source == Source::Envelope) ? v
+                               : (source == Source::Lfo)      ? lfoVal
+                                                              : manualPos;
+            lastDriver = driver;
 
-            const SVFCoeffs c = computeSVFCoeffs (fc, q, fs);
+            const float sweep  = (direction == Direction::Up) ? driver : (1.0f - driver);
+            const float fcBase = fcMin * std::pow (2.0f, octaves * sweep);
+            lastFc = fcBase;
+
+            SVFCoeffs cShared;
+            if (! perCh)
+                cShared = computeSVFCoeffs (fcBase, q, fs);
 
             for (int ch = 0; ch < chans; ++ch)
             {
+                const SVFCoeffs c = perCh
+                    ? computeSVFCoeffs (fcBase * (ch == 0 ? (1.0f + spread) : (1.0f - spread)), q, fs)
+                    : cShared;
+
                 const SVFOutputs o = states[(size_t) ch].processNL (c, data[ch][n], satHeadroom);
                 float wet = (mode == Mode::LowPass)  ? o.lp
                           : (mode == Mode::BandPass) ? o.bp
@@ -142,8 +162,6 @@ private:
 
     void updateVactrol() noexcept
     {
-        // Release knob sets the base time; the vactrol's level-dependent spread
-        // (bright = faster, dark = slower) is kept around it.
         vactrol.setTimes (attackMs, releaseMs * 0.5, releaseMs * 2.0);
     }
 
@@ -151,6 +169,7 @@ private:
 
     EnvelopeFollower      env;
     Vactrol               vactrol;
+    Lfo                   lfo;
     SVFState              detHP;
     SVFCoeffs             detHPCoeffs;
     std::vector<SVFState> states;
@@ -162,11 +181,15 @@ private:
     float     releaseMs   = 180.0f;
     float     drive       = 0.2f;
     float     contourHz   = 90.0f;
+    float     manualPos   = 0.5f;
+    float     spread      = 0.0f;
+    float     lastDriver  = 0.0f;
     float     lastFc      = 1000.0f;
     float     fcMin       = 180.0f;
     float     octaves     = 4.25f;
-    const float satHeadroom = 3.0f; // SVF self-limit threshold
+    const float satHeadroom = 3.0f;
 
+    Source    source      = Source::Envelope;
     Range     range       = Range::High;
     Mode      mode        = Mode::BandPass;
     Direction direction   = Direction::Up;

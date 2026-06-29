@@ -32,10 +32,21 @@ class FilterScope : public juce::Component
 {
 public:
     void setData (float cutoffHz, float q, int mode);
+    void pushSpectrum (const float* block, double sampleRate);
     void paint (juce::Graphics&) override;
 private:
-    float cutoff = 1000.0f, qv = 2.0f;
+    static constexpr int fftSize = 2048;
+    float cutoff = 1000.0f, qv = 2.0f;             // smoothed display values
+    float targetCutoff = 1000.0f, targetQ = 2.0f;  // latest from the processor
     int   mode = 1;
+    double sr = 48000.0;
+
+    juce::dsp::FFT fft { 11 };
+    juce::dsp::WindowingFunction<float> window { (size_t) fftSize, juce::dsp::WindowingFunction<float>::hann };
+    std::array<float, (size_t) fftSize * 2> fftData {};
+    std::array<float, (size_t) fftSize / 2> spectrum {};
+    std::array<float, 28> trail {};
+    int trailIdx = 0;
 };
 
 //==============================================================================
@@ -108,10 +119,10 @@ private:
     ZooLookAndFeel lnf;
 
     FilterScope scope;
-    juce::Slider gain, peak, contour, attack, release, drive, output, mix;
-    std::unique_ptr<SA> gainAtt, peakAtt, contourAtt, attackAtt, releaseAtt, driveAtt, outputAtt, mixAtt;
+    juce::Slider gain, peak, contour, attack, release, drive, rate, width, output, mix;
+    std::unique_ptr<SA> gainAtt, peakAtt, contourAtt, attackAtt, releaseAtt, driveAtt, rateAtt, widthAtt, outputAtt, mixAtt;
 
-    std::unique_ptr<PedalSwitch> rangeSw, modeSw, dirSw;
+    std::unique_ptr<PedalSwitch> rangeSw, modeSw, dirSw, sourceSw, shapeSw, syncSw;
     PresetBar  presetBar;
     Footswitch footswitch;
     EnvLED     led;

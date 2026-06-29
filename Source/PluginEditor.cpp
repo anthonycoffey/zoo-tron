@@ -89,10 +89,36 @@ void EnvLED::paint (juce::Graphics& g)
 //==============================================================================
 void FilterScope::setData (float c, float q, int m)
 {
-    if (! juce::approximatelyEqual (c, cutoff) || ! juce::approximatelyEqual (q, qv) || m != mode)
+    targetCutoff = juce::jlimit (20.0f, 20000.0f, c);
+    targetQ = q;
+    mode = m;
+
+    // Glide toward the target — cutoff in the log domain so the playhead moves
+    // smoothly across the (log-frequency) display instead of stepping.
+    const float lc = std::log (cutoff), lt = std::log (targetCutoff);
+    cutoff = std::exp (lc + 0.35f * (lt - lc));
+    qv += 0.35f * (targetQ - qv);
+
+    trail[(size_t) trailIdx] = cutoff;
+    trailIdx = (trailIdx + 1) % (int) trail.size();
+    repaint();
+}
+
+void FilterScope::pushSpectrum (const float* block, double sampleRate)
+{
+    sr = sampleRate;
+    std::copy (block, block + fftSize, fftData.begin());
+    std::fill (fftData.begin() + fftSize, fftData.end(), 0.0f);
+    window.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
+    fft.performFrequencyOnlyForwardTransform (fftData.data());
+
+    const float norm = 2.0f / (float) fftSize;
+    for (int i = 0; i < fftSize / 2; ++i)
     {
-        cutoff = c; qv = q; mode = m;
-        repaint();
+        const float mag   = fftData[(size_t) i] * norm;
+        const float db    = juce::Decibels::gainToDecibels (mag + 1.0e-9f, -90.0f);
+        const float level = juce::jlimit (0.0f, 1.0f, (db + 84.0f) / 84.0f);
+        spectrum[(size_t) i] = juce::jmax (level, spectrum[(size_t) i] * 0.82f); // rise fast, fall slow
     }
 }
 
@@ -109,20 +135,8 @@ void FilterScope::paint (juce::Graphics& g)
 
     auto fToX = [&] (float f) { return L + (std::log10 (f) - lmin) / (lmax - lmin) * W; };
     auto xToF = [&] (float xx) { return std::pow (10.0f, lmin + (xx - L) / W * (lmax - lmin)); };
-    const float dbMax = 18.0f, dbMin = -30.0f;
+    const float dbMax = 24.0f, dbMin = -30.0f;
     auto dbToY = [&] (float db) { return T + (dbMax - db) / (dbMax - dbMin) * H; };
-
-    g.setColour (colours::grid);
-    for (float f : { 100.0f, 1000.0f, 10000.0f })
-        g.drawLine (fToX (f), T, fToX (f), B, 1.0f);
-    g.setColour (colours::grid0);
-    g.drawLine (L, dbToY (0.0f), R, dbToY (0.0f), 1.0f);
-
-    g.setColour (colours::textMute);
-    g.setFont (juce::FontOptions (9.0f));
-    g.drawText ("100", (int) fToX (100.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
-    g.drawText ("1k",  (int) fToX (1000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
-    g.drawText ("10k", (int) fToX (10000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
 
     const float qc = juce::jmax (0.2f, qv);
     auto magAt = [&] (float w)
@@ -134,30 +148,92 @@ void FilterScope::paint (juce::Graphics& g)
         return 20.0f * std::log10 (juce::jmax (1.0e-4f, m));
     };
 
-    juce::Path curve;
-    bool started = false;
-    for (float x = L; x <= R; x += 2.0f)
     {
-        const float y = juce::jlimit (T, B, dbToY (magAt (xToF (x) / cutoff)));
-        if (! started) { curve.startNewSubPath (x, y); started = true; }
-        else             curve.lineTo (x, y);
+        juce::Graphics::ScopedSaveState save (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (b.reduced (1.5f), 7.0f);
+        g.reduceClipRegion (clip);
+
+        // live signal spectrum, riding behind the grid + filter curve
+        {
+            juce::Path spec;
+            spec.startNewSubPath (L, B);
+            for (float x = L; x <= R; x += 1.0f)
+            {
+                const int bin = juce::jlimit (0, fftSize / 2 - 1, (int) std::round (xToF (x) * fftSize / sr));
+                spec.lineTo (x, B - spectrum[(size_t) bin] * H);
+            }
+            spec.lineTo (R, B); spec.closeSubPath();
+            juce::ColourGradient sg (juce::Colour (0xff6f68a0).withAlpha (0.55f), 0.0f, B,
+                                     juce::Colour (0xff6f68a0).withAlpha (0.08f), 0.0f, T, false);
+            g.setGradientFill (sg);
+            g.fillPath (spec);
+        }
+
+        g.setColour (colours::grid);
+        for (float f : { 100.0f, 1000.0f, 10000.0f })
+            g.drawLine (fToX (f), T, fToX (f), B, 1.0f);
+        g.setColour (colours::grid0);
+        for (float db : { 12.0f, 0.0f, -12.0f, -24.0f })
+            g.drawLine (L, dbToY (db), R, dbToY (db), 1.0f);
+
+        g.setColour (colours::textMute);
+        g.setFont (juce::FontOptions (9.0f));
+        g.drawText ("100", (int) fToX (100.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+        g.drawText ("1k",  (int) fToX (1000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+        g.drawText ("10k", (int) fToX (10000.0f) - 16, (int) B - 13, 32, 12, juce::Justification::centred);
+
+        juce::Path curve;
+        bool started = false;
+        for (float x = L; x <= R; x += 1.0f) // 1px sampling -> silky line
+        {
+            const float y = juce::jlimit (T, B, dbToY (magAt (xToF (x) / cutoff)));
+            if (! started) { curve.startNewSubPath (x, y); started = true; }
+            else             curve.lineTo (x, y);
+        }
+
+        juce::Path fill = curve;
+        fill.lineTo (R, B); fill.lineTo (L, B); fill.closeSubPath();
+        juce::ColourGradient grad (colours::teal.withAlpha (0.30f), area.getCentreX(), T,
+                                   colours::teal.withAlpha (0.02f), area.getCentreX(), B, false);
+        g.setGradientFill (grad);
+        g.fillPath (fill);
+
+        g.setColour (colours::teal.withAlpha (0.16f)); // soft glow underlay
+        g.strokePath (curve, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (colours::teal);
+        g.strokePath (curve, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // playhead afterglow — fading dots along its recent path
+        const float trailY = juce::jlimit (T, B, dbToY (magAt (1.0f)));
+        const int tn = (int) trail.size();
+        for (int age = tn - 1; age >= 1; --age)
+        {
+            const int idx = ((trailIdx - 1 - age) % tn + tn) % tn;
+            const float tc = trail[(size_t) idx];
+            if (tc <= 1.0f) continue;
+            const float frac = 1.0f - (float) age / (float) tn;
+            const float tx = juce::jlimit (L, R, fToX (tc));
+            g.setColour (colours::teal.withAlpha (0.30f * frac));
+            const float rr = 1.0f + 3.0f * frac;
+            g.fillEllipse (juce::Rectangle<float> (rr * 2.0f, rr * 2.0f).withCentre ({ tx, trailY }));
+        }
+
+        const float px = juce::jlimit (L, R, fToX (cutoff));
+        juce::ColourGradient ph (colours::teal.withAlpha (0.0f), px - 14.0f, T,
+                                 colours::teal.withAlpha (0.0f), px + 14.0f, T, false);
+        ph.addColour (0.5, colours::teal.withAlpha (0.18f));
+        g.setGradientFill (ph);
+        g.fillRect (juce::Rectangle<float> (px - 14.0f, T, 28.0f, H));
+        g.setColour (colours::teal.withAlpha (0.55f));
+        g.drawLine (px, T, px, B, 1.2f);
+
+        const float py = juce::jlimit (T, B, dbToY (magAt (1.0f)));
+        g.setColour (colours::teal.withAlpha (0.3f));
+        g.fillEllipse (juce::Rectangle<float> (16.0f, 16.0f).withCentre ({ px, py }));
+        g.setColour (juce::Colour (0xffd6fff4));
+        g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ px, py }));
     }
-
-    juce::Path fill = curve;
-    fill.lineTo (R, B); fill.lineTo (L, B); fill.closeSubPath();
-    g.setColour (colours::teal.withAlpha (0.16f));
-    g.fillPath (fill);
-    g.setColour (colours::teal);
-    g.strokePath (curve, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    const float px = juce::jlimit (L, R, fToX (cutoff));
-    const float py = juce::jlimit (T, B, dbToY (magAt (1.0f)));
-    g.setColour (colours::teal.withAlpha (0.4f));
-    g.drawLine (px, T, px, B, 1.0f);
-    g.setColour (colours::teal.withAlpha (0.25f));
-    g.fillEllipse (juce::Rectangle<float> (18.0f, 18.0f).withCentre ({ px, py }));
-    g.setColour (juce::Colour (0xffd6fff4));
-    g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ px, py }));
 
     g.setColour (colours::wellStroke);
     g.drawRoundedRectangle (b, 8.0f, 1.5f);
@@ -195,7 +271,7 @@ void PedalSwitch::paint (juce::Graphics& g)
     auto content = b.withTrimmedBottom (nameH);
 
     const int wellW = 16;
-    const int wellH = (n == 3 ? 46 : 40);
+    const int wellH = 32 + (n - 1) * 8; // taller well for more positions
     const int wellX = content.getX() + 8;
     const int wellY = content.getCentreY() - wellH / 2;
 
@@ -215,12 +291,12 @@ void PedalSwitch::paint (juce::Graphics& g)
     g.setColour (colours::batMetal);
     g.fillEllipse ((float) (batX - 6), (float) (by - 6), 12.0f, 12.0f);
 
-    g.setFont (juce::FontOptions (n == 3 ? 10.0f : 11.0f, juce::Font::bold));
+    g.setFont (juce::FontOptions (n >= 4 ? 8.0f : (n == 3 ? 10.0f : 11.0f), juce::Font::bold));
     const int labX = wellX + wellW + 8;
     for (int i = 0; i < n; ++i)
     {
         g.setColour (i == slot ? colours::teal : colours::textMute);
-        g.drawText (labels[i], labX, slotY (i) - 8, 42, 16, juce::Justification::centredLeft);
+        g.drawText (labels[i], labX, slotY (i) - 7, 44, 14, juce::Justification::centredLeft);
     }
 
     g.setColour (colours::textLav);
@@ -380,6 +456,7 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
 
     styleKnob (gain); styleKnob (peak); styleKnob (contour);
     styleKnob (attack); styleKnob (release); styleKnob (drive);
+    styleKnob (rate); styleKnob (width);
     styleKnob (output); styleKnob (mix);
     gainAtt    = std::make_unique<SA> (p.apvts, "gain",    gain);
     peakAtt    = std::make_unique<SA> (p.apvts, "peak",    peak);
@@ -389,6 +466,8 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
     driveAtt   = std::make_unique<SA> (p.apvts, "drive",   drive);
     outputAtt  = std::make_unique<SA> (p.apvts, "output",  output);
     mixAtt     = std::make_unique<SA> (p.apvts, "mix",     mix);
+    rateAtt    = std::make_unique<SA> (p.apvts, "lfoRate", rate);
+    widthAtt   = std::make_unique<SA> (p.apvts, "width",   width);
 
     rangeSw = std::make_unique<PedalSwitch> (*p.apvts.getParameter ("range"),
                   juce::StringArray { "HI", "LO" }, std::vector<int> { 1, 0 }, "RANGE");
@@ -400,12 +479,22 @@ ZooTronAudioProcessorEditor::ZooTronAudioProcessorEditor (ZooTronAudioProcessor&
     addAndMakeVisible (*modeSw);
     addAndMakeVisible (*dirSw);
 
+    sourceSw = std::make_unique<PedalSwitch> (*p.apvts.getParameter ("source"),
+                  juce::StringArray { "ENV", "LFO", "MAN" }, std::vector<int> { 0, 1, 2 }, "SOURCE");
+    shapeSw  = std::make_unique<PedalSwitch> (*p.apvts.getParameter ("lfoShape"),
+                  juce::StringArray { "SIN", "TRI", "SQR", "S&H" }, std::vector<int> { 0, 1, 2, 3 }, "SHAPE");
+    syncSw   = std::make_unique<PedalSwitch> (*p.apvts.getParameter ("lfoSync"),
+                  juce::StringArray { "FRE", "SYN" }, std::vector<int> { 0, 1 }, "SYNC");
+    addAndMakeVisible (*sourceSw);
+    addAndMakeVisible (*shapeSw);
+    addAndMakeVisible (*syncSw);
+
     addAndMakeVisible (presetBar);
     addAndMakeVisible (footswitch);
     addAndMakeVisible (led);
 
-    setSize (600, 620);
-    startTimerHz (30);
+    setSize (600, 650);
+    startTimerHz (60);
 }
 
 ZooTronAudioProcessorEditor::~ZooTronAudioProcessorEditor()
@@ -453,47 +542,50 @@ void ZooTronAudioProcessorEditor::paint (juce::Graphics& g)
     screw (face.getRight() - 22, face.getBottom() - 22);
 
     g.setColour (colours::cream);
-    g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
-    g.drawText ("ZOO-TRON III", 40, 30, 260, 28, juce::Justification::centredLeft);
+    g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
+    g.drawText ("ZOO-TRON III", 40, 32, 280, 28, juce::Justification::centredLeft);
     g.setColour (colours::textMute);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("envelope filter", 42, 56, 260, 14, juce::Justification::centredLeft);
-    g.drawText ("ENV", 538, 50, 44, 12, juce::Justification::centred);
+    g.drawText ("envelope filter", 42, 58, 280, 14, juce::Justification::centredLeft);
+    g.drawText ("ENV", 538, 52, 44, 12, juce::Justification::centred);
 
     g.setColour (colours::textLav);
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawText ("GAIN",    64, 398, 68, 14, juce::Justification::centred);
-    g.drawText ("PEAK",   199, 398, 68, 14, juce::Justification::centred);
-    g.drawText ("CONTOUR",334, 398, 68, 14, juce::Justification::centred);
-    g.drawText ("ATTACK", 469, 398, 68, 14, juce::Justification::centred);
-    g.drawText ("RELEASE", 64, 490, 68, 14, juce::Justification::centred);
-    g.drawText ("DRIVE",  199, 490, 68, 14, juce::Justification::centred);
-    g.drawText ("OUTPUT", 334, 490, 68, 14, juce::Justification::centred);
-    g.drawText ("MIX",    469, 490, 68, 14, juce::Justification::centred);
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    const char* row1[] = { "GAIN", "PEAK", "CONTOUR", "ATTACK", "RELEASE" };
+    const char* row2[] = { "DRIVE", "RATE", "WIDTH", "OUTPUT", "MIX" };
+    const int   kx[]   = { 84, 192, 300, 408, 516 };
+    for (int i = 0; i < 5; ++i)
+    {
+        g.drawText (row1[i], kx[i] - 34, 374, 68, 14, juce::Justification::centred);
+        g.drawText (row2[i], kx[i] - 34, 462, 68, 14, juce::Justification::centred);
+    }
 }
 
 void ZooTronAudioProcessorEditor::resized()
 {
-    led.setBounds (551, 29, 18, 18);
+    led.setBounds (551, 31, 18, 18);
     presetBar.setBounds (300, 24, 220, 38);
+    scope.setBounds (26, 92, 548, 196);
 
-    scope.setBounds (26, 92, 548, 212);
+    const int kx[] = { 84, 192, 300, 408, 516 };
+    gain.setBounds    (kx[0] - 32, 306, 64, 64);
+    peak.setBounds    (kx[1] - 32, 306, 64, 64);
+    contour.setBounds (kx[2] - 32, 306, 64, 64);
+    attack.setBounds  (kx[3] - 32, 306, 64, 64);
+    release.setBounds (kx[4] - 32, 306, 64, 64);
+    drive.setBounds   (kx[0] - 32, 394, 64, 64);
+    rate.setBounds    (kx[1] - 32, 394, 64, 64);
+    width.setBounds   (kx[2] - 32, 394, 64, 64);
+    output.setBounds  (kx[3] - 32, 394, 64, 64);
+    mix.setBounds     (kx[4] - 32, 394, 64, 64);
 
-    gain.setBounds    (64, 324, 68, 68);
-    peak.setBounds    (199, 324, 68, 68);
-    contour.setBounds (334, 324, 68, 68);
-    attack.setBounds  (469, 324, 68, 68);
-
-    release.setBounds (64, 416, 68, 68);
-    drive.setBounds   (199, 416, 68, 68);
-    output.setBounds  (334, 416, 68, 68);
-    mix.setBounds     (469, 416, 68, 68);
-
-    rangeSw->setBounds (70, 506, 80, 86);
-    modeSw->setBounds  (190, 506, 80, 86);
-    dirSw->setBounds   (310, 506, 80, 86);
-
-    footswitch.setBounds (450, 498, 100, 114);
+    rangeSw->setBounds (29, 490, 70, 84);
+    modeSw->setBounds  (99, 490, 70, 84);
+    dirSw->setBounds   (169, 490, 70, 84);
+    footswitch.setBounds (250, 484, 100, 122);
+    sourceSw->setBounds  (361, 490, 70, 84);
+    shapeSw->setBounds   (431, 490, 70, 84);
+    syncSw->setBounds    (501, 490, 70, 84);
 }
 
 void ZooTronAudioProcessorEditor::timerCallback()
@@ -503,4 +595,7 @@ void ZooTronAudioProcessorEditor::timerCallback()
 
     const int mode = (int) audioProcessor.apvts.getRawParameterValue ("mode")->load();
     scope.setData (audioProcessor.cutoffOut.load(), audioProcessor.resonanceOut.load(), mode);
+
+    if (audioProcessor.fftReady.exchange (false))
+        scope.pushSpectrum (audioProcessor.fftBlock(), audioProcessor.getSampleRate());
 }

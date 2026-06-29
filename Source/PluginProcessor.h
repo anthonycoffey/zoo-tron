@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 #include "dsp/MuTronEngine.h"
 #include "PresetManager.h"
 
@@ -44,6 +45,13 @@ public:
     std::atomic<float> cutoffOut    { 1000.0f };
     std::atomic<float> resonanceOut { 2.0f };
 
+    // Spectrum-analyzer feed: the audio thread fills a FIFO with the output
+    // signal; the editor pulls a block and runs the FFT for the scope.
+    static constexpr int fftOrder = 11;
+    static constexpr int fftSize  = 1 << fftOrder; // 2048
+    std::atomic<bool> fftReady { false };
+    const float* fftBlock() const noexcept { return fftLatest.data(); }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -56,6 +64,23 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bypassSmoothed;
 
     juce::RangedAudioParameter* bypassParam = nullptr;
+
+    std::array<float, (size_t) fftSize> fftFifo {};
+    std::array<float, (size_t) fftSize> fftLatest {};
+    int fifoIndex = 0;
+    inline void pushSampleForFFT (float s) noexcept
+    {
+        if (fifoIndex == fftSize)
+        {
+            if (! fftReady.load())
+            {
+                std::copy (fftFifo.begin(), fftFifo.end(), fftLatest.begin());
+                fftReady.store (true);
+            }
+            fifoIndex = 0;
+        }
+        fftFifo[(size_t) fifoIndex++] = s;
+    }
 
     // Cached raw parameter pointers.
     std::atomic<float>* pGain      = nullptr;
@@ -70,6 +95,12 @@ private:
     std::atomic<float>* pRelease   = nullptr;
     std::atomic<float>* pDrive     = nullptr;
     std::atomic<float>* pContour   = nullptr;
+    std::atomic<float>* pSource    = nullptr;
+    std::atomic<float>* pLfoRate   = nullptr;
+    std::atomic<float>* pLfoShape  = nullptr;
+    std::atomic<float>* pLfoSync   = nullptr;
+    std::atomic<float>* pWidth     = nullptr;
+    juce::RangedAudioParameter* rateParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZooTronAudioProcessor)
 };
